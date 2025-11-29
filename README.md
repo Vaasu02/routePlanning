@@ -14,11 +14,6 @@ This Django application provides an API designed to calculate and display:
   - Fuel efficiency: 10 miles per gallon.
 - Uses a provided fuel price dataset to determine refueling costs.
 
-## Example Map
-Below is an example of the route map with marked fuel stops:
-
-![Route Map](https://github.com/UzairNaeem3/route-planner-with-fuel/blob/master/LA_NY.png)
-
 ## How It Works
 1. **Input**: Users provide a start and finish location within the USA.
 2. **Route Calculation**: The API calculates the best route using a free map and routing service.
@@ -29,16 +24,12 @@ Below is an example of the route map with marked fuel stops:
    - A map showing the route and marked refueling stops.
    - A JSON response summarizing the total fuel cost and other details.
 
-## Prerequisites
-- Python 3.7+
-- Install dependencies listed in `requirements.txt`.
-
 
 ## Setup Instructions
 1. Clone the repository:
    ```bash
-   git clone https://github.com/UzairNaeem3/route-planner-with-fuel.git
-   cd route-planner-with-fuel
+   git clone https://github.com/Vaasu02/routePlanning.git
+   cd routePlanning
    ```
 2. Create and activate a virtual environment:
    ```bash
@@ -63,8 +54,8 @@ Below is an example of the route map with marked fuel stops:
    **Request Body**:
    ```json
    {
-       "start_location": "New York, NY, USA",
-       "finish_location": "Los Angeles, CA, USA"
+       "start": "Chicago, IL",
+       "end": "Los Angeles, CA"
    }
    ```
    
@@ -74,8 +65,8 @@ Below is an example of the route map with marked fuel stops:
     "route_coordinates": ["Coordinates between start and end location"],
     "map_url": "URL-to-route-map",
     "fuel_stops": ["Fuel stops along the route"],
-    "total_cost": 123.45,
-    "total_distance": 500.0
+    "total_cost": 340.0210,
+    "total_distance": 2017.9236830004847
 }
    ```
 
@@ -86,14 +77,4 @@ Below is an example of the route map with marked fuel stops:
 - **Backend**: Django
 - **Mapping API**: Free map and routing API (e.g., OpenRouteService, MapQuest, or similar)
 
-## Future Enhancements
-- Support for different fuel efficiency values.
-- Dynamic vehicle range input.
-- Enhanced UI for route and fuel stop visualization.
-- Integration with real-time fuel price APIs.
 
-
-## Contributing
-Contributions are welcome! Please open an issue or submit a pull request for any improvements or bug fixes.
-
-Feel free to reach out with questions or suggestions!
