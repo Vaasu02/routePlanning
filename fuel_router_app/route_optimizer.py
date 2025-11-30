@@ -99,109 +99,202 @@ class RouteOptimizer:
         fuel_stops = []
         remaining_range = tank_range
         last_stop_coords = start_coords
-        stations = FuelStation.objects.all()
+        
+        # Optimize: Filter stations by bounding box of the route
+        lats = [p[1] for p in route_coordinates]
+        lons = [p[0] for p in route_coordinates]
+        min_lat, max_lat = min(lats), max(lats)
+        min_lon, max_lon = min(lons), max(lons)
+        
+        # Add a buffer (approx 50 miles ~ 0.7 degrees)
+        buffer = 1.0 
+        stations = list(FuelStation.objects.filter(
+            lat__gte=min_lat - buffer,
+            lat__lte=max_lat + buffer,
+            lon__gte=min_lon - buffer,
+            lon__lte=max_lon + buffer
+        ))
 
         # Sample points every 50 miles
-        """
-        The route is sampled at intervals (every ~50 miles) to reduce computational overhead by considering only key
-        points instead of every point along the route.
-        """
-        sample_interval = max(1, len(route_coordinates) // int(total_distance / 50))
+        sample_interval = max(1, len(route_coordinates) // int(total_distance / 50)) if int(total_distance / 50) > 0 else 1
         sampled_points = route_coordinates[::sample_interval]
+        
+        # Ensure the last point is included if not already
+        if sampled_points[-1] != route_coordinates[-1]:
+            sampled_points.append(route_coordinates[-1])
 
-        for i, point in enumerate(sampled_points):
-            # Calculate progress along route
-            progress = i / len(sampled_points) * total_distance
+        i = 0
+        while i < len(sampled_points):
+            point = sampled_points[i]
+            # Current point coords (lat, lon)
+            current_coords = (point[1], point[0])
+            
+            # Calculate distance from last check (or start)
+            if i > 0:
+                prev_point = sampled_points[i-1]
+                dist_from_prev = self.calculate_distance((prev_point[1], prev_point[0]), current_coords)
+                remaining_range -= dist_from_prev
+            
+            # Calculate progress
+            dist_from_start = self.calculate_distance(start_coords, current_coords)
 
-            # If we're running low on fuel (25% of tank range remaining)
-            """
-            The car's fuel tank range is tracked, and when it drops below 25% of its capacity,
-            nearby fuel stations are searched.
-            """
-            if remaining_range < (tank_range * 0.25) and progress < total_distance:
-                # Find nearby stations
+            # Check if we need fuel
+            # Strategy: Look for fuel when we are below 40% OR if we can't reach the next sample point
+            # Estimate distance to next sample point (approx 50 miles)
+            dist_to_next = 50 
+            if i < len(sampled_points) - 1:
+                 next_point = sampled_points[i+1]
+                 dist_to_next = self.calculate_distance(current_coords, (next_point[1], next_point[0]))
+
+            if remaining_range < (tank_range * 0.40) or remaining_range < (dist_to_next + 20):
+                
+                # If we are close to destination, check if we can make it
+                dist_to_end = self.calculate_distance(current_coords, end_coords)
+                if remaining_range >= dist_to_end:
+                    i += 1
+                    continue # We can make it!
+
+                # Search for stations
+                # Search radius: We should search up to our remaining range.
+                # We use a slight buffer (95%) to account for road vs geodesic differences, 
+                # but if we are critical, we take the risk and search full range.
+                
+                search_radius = remaining_range * 0.95
+                if remaining_range < 50:
+                    search_radius = remaining_range # Desperate times
+
                 nearby_stations = []
-                """
-                For each critical point on the route, nearby fuel stations are identified
-                within a 20% radius of the tank range.
-                """
-                search_radius = tank_range * 0.2  # Look within 20% of tank range
-
                 for station in stations:
-                    distance = self.calculate_distance((point[1], point[0]), (station.lat, station.lon))
-
-                    if distance <= search_radius:
-                        # Calculate deviation from route
-
-                        """
-                        Deviation measures how much a fuel station deviates from the most direct route between the
-                        current point on the route and the destination (end coordinates). The goal is to penalize
-                        stations that cause unnecessary detours, as those will increase the overall trip distance
-                        and fuel costs.
-
-                        Formula:
-                        D(start to station): Distance from Current Point to Fuel Station
-                        D(station to end): Distance from Fuel Station to Destination
-                        D(start to end): Direct Distance from Current Point to Destination
-
-                        Deviation (Detour): (D(start to station) + D(station to end)) - D(start to end)
-                        """
+                    dist_to_station = self.calculate_distance(current_coords, (station.lat, station.lon))
+                    
+                    if dist_to_station <= search_radius:
+                        # Deviation logic
                         deviation = (
-                            (self.calculate_distance((point[1], point[0]), (station.lat, station.lon)) +
+                            (dist_to_station +
                              self.calculate_distance((station.lat, station.lon), end_coords)) -
-                            self.calculate_distance((point[1], point[0]), end_coords)
+                            dist_to_end
                         )
-
-                        # Score based on price and deviation
-                        # Lower is better
-                        score = float(station.retail_price) + (deviation * 0.1)  # Penalty for deviation
+                        
+                        # Score: Price + Deviation penalty
+                        # We want low price and low deviation.
+                        # Weight deviation: 1 mile deviation ~= $0.10 per gallon penalty? 
+                        # This is heuristic.
+                        score = float(station.retail_price) + (deviation * 0.05)
                         nearby_stations.append({
                             'station': station,
-                            'distance': distance,
+                            'distance': dist_to_station,
                             'deviation': deviation,
                             'score': score
                         })
-                """
-                The "best" station is selected based on a scoring system:
-                    1. Fuel price: Lower prices are preferred.
-                    2. Route deviation: Stations that deviate less from the direct route are favored
-                        (to minimize detour cost).
-                """
+
                 if nearby_stations:
                     best_station = min(nearby_stations, key=lambda x: x['score'])
-
-                    # Calculate gallons needed
-                    distance_since_last = self.calculate_distance(last_stop_coords, (
-                        best_station['station'].lat, best_station['station'].lon))
-
-                    gallons_needed = distance_since_last / mpg
-
+                    station_obj = best_station['station']
+                    
+                    # Calculate gallons needed to fill up
+                    # We assume we fill up to full tank
+                    # Gallons used since last fill = (Tank Capacity - Remaining at station)
+                    # But wait, we are at 'current_coords', station is 'dist_to_station' away.
+                    # We arrive at station with: remaining_range - best_station['distance']
+                    range_at_station = remaining_range - best_station['distance']
+                    gallons_to_fill = (tank_range - range_at_station) / mpg
+                    
+                    # Cost for this fill-up
+                    cost = float(station_obj.retail_price) * gallons_to_fill
+                    
                     fuel_stops.append({
-                        'station_id': best_station['station'].opis_id,
-                        'name': best_station['station'].name,
+                        'station_id': station_obj.opis_id,
+                        'name': station_obj.name,
                         'location': {
-                            'lat': best_station['station'].lat,
-                            'lng': best_station['station'].lon
+                            'lat': station_obj.lat,
+                            'lng': station_obj.lon
                         },
-                        'price': float(best_station['station'].retail_price),
-                        'distance_from_start': progress,
-                        'gallons': gallons_needed,
-                        'cost': float(best_station['station'].retail_price) * gallons_needed
+                        'price': float(station_obj.retail_price),
+                        'distance_from_start': dist_from_start + best_station['distance'], # Approx
+                        'gallons': gallons_to_fill,
+                        'cost': cost
                     })
+                    
+                    # Update state
+                    last_stop_coords = (station_obj.lat, station_obj.lon)
+                    
+                    # Resume logic: Find the closest sample point to the station
+                    best_k = i
+                    min_d = float('inf')
+                    # Search forward from current point
+                    for k in range(i, len(sampled_points)):
+                         pt = sampled_points[k]
+                         d = self.calculate_distance((pt[1], pt[0]), (station_obj.lat, station_obj.lon))
+                         if d < min_d:
+                             min_d = d
+                             best_k = k
+                         else:
+                             # If distance starts increasing, we are moving away
+                             if d > min_d + 50: # Buffer
+                                 break
+                    
+                    if best_k < len(sampled_points) - 1:
+                        # Resume from best_k + 1
+                        i = best_k + 1
+                        
+                        # Calculate remaining range at best_k + 1
+                        # It is Tank Range - Dist(Station, best_k+1)
+                        next_pt = sampled_points[i]
+                        dist_station_to_next = self.calculate_distance(
+                            (station_obj.lat, station_obj.lon),
+                            (next_pt[1], next_pt[0])
+                        )
+                        
+                        # We need to trick the loop into setting this remaining_range.
+                        # The loop does: remaining_range -= dist_from_prev
+                        # We want remaining_range to be (Tank - Dist_Station_Next) AFTER the loop subtraction.
+                        # So we set remaining_range = Tank - Dist_Station_Next + Dist_Prev_Next
+                        
+                        prev_pt_resume = sampled_points[i-1]
+                        dist_prev_resume_to_next = self.calculate_distance(
+                            (prev_pt_resume[1], prev_pt_resume[0]),
+                            (next_pt[1], next_pt[0])
+                        )
+                        remaining_range = tank_range - dist_station_to_next + dist_prev_resume_to_next
+                        
+                        continue
+                    else:
+                        # We are at the end of the route
+                        remaining_range = tank_range # Full tank at end?
+                        i += 1
+                        continue
 
-                    # Update tracking variables
-                    last_stop_coords = (best_station['station'].lat, best_station['station'].lon)
-                    remaining_range = tank_range
+                else:
+                    # No stations found!
+                    if remaining_range < 20:
+                        raise ValueError(f"Unable to find fuel stations! Stranded at {current_coords} with {remaining_range:.2f} miles range.")
+            
+            i += 1
 
-            # Update remaining range
-            if i > 0:
-                distance_covered = self.calculate_distance(
-                    (sampled_points[i - 1][1], sampled_points[i - 1][0]),
-                    (point[1], point[0])
-                )
-                remaining_range -= distance_covered
-
-        total_cost = sum(stop['cost'] for stop in fuel_stops)
+        # Calculate final leg cost
+        dist_last_stop_to_end = self.calculate_distance(last_stop_coords, end_coords)
+        gallons_final = dist_last_stop_to_end / mpg
+        
+        # Price for final leg? Use average of paid prices or last stop price.
+        if fuel_stops:
+            final_price = fuel_stops[-1]['price']
+        else:
+            # No stops needed (short trip), use average of all stations or a default?
+            # Or maybe we started with a full tank and didn't pay for it?
+            # The prompt says "return total money spent on fuel".
+            # Usually implies cost of the trip. Let's charge for the fuel used.
+            # We'll use a national average or just the first station we find?
+            # Let's use the average price of stations in our bounding box as a fallback.
+            if stations:
+                avg_price = sum(float(s.retail_price) for s in stations) / len(stations)
+                final_price = avg_price
+            else:
+                final_price = 3.50 # Fallback
+        
+        final_cost = final_price * gallons_final
+        
+        # If we want to include the final leg in the "total cost" but not as a "stop":
+        total_cost = sum(stop['cost'] for stop in fuel_stops) + final_cost
 
         return {
             'fuel_stops': fuel_stops,

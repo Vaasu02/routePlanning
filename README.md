@@ -34,13 +34,21 @@ This Django application provides an API designed to calculate and display:
 2. Create and activate a virtual environment:
    ```bash
    python -m venv venv
-   source venv/bin/activate   # On Windows: venv\Scripts\activate
+   .\venv\Scripts\Activate.ps1
    ```
 3. Install dependencies:
    ```bash
    pip install -r requirements.txt
    ```
-4. Run the API server:
+4. Run migrations to create database tables:
+   ```bash
+   python manage.py migrate
+   ```
+5. Import fuel stations from the CSV:
+   ```bash
+   python manage.py import_stations
+   ```
+6. Run the API server:
    ```bash
    python manage.py runserver
    ```
@@ -62,19 +70,24 @@ This Django application provides an API designed to calculate and display:
    **Response**:
    ```json
    {
-    "route_coordinates": ["Coordinates between start and end location"],
-    "map_url": "URL-to-route-map",
-    "fuel_stops": ["Fuel stops along the route"],
-    "total_cost": 340.0210,
-    "total_distance": 2017.9236830004847
-}
+    "route_coordinates": [[-87.6298, 41.8781], ...],
+    "map_url": "/media/maps/map.html",
+    "fuel_stops": [
+        {
+            "station_id": 192,
+            "name": "Brew Stuart Truckstop",
+            "location": {"lat": 41.496, "lng": -94.375},
+            "price": 3.099,
+            "distance_from_start": 350.14,
+            "gallons": 35.29,
+            "cost": 109.36
+        },
+        ... (3 more stops)
+    ],
+    "total_cost": 690.17,
+    "total_distance": 2017.92
+   }
    ```
 
-## Fuel Price Dataset
-- The API uses a provided dataset containing fuel prices across various locations in the USA. Ensure the dataset is placed in the specified folder before running the server.
-
-## Technologies Used
-- **Backend**: Django
-- **Mapping API**: Free map and routing API (e.g., OpenRouteService, MapQuest, or similar)
 
 
