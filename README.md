@@ -70,7 +70,7 @@ This Django application provides an API designed to calculate and display:
    **Response**:
    ```json
    {
-    "route_coordinates": [[-87.6298, 41.8781], ...],
+    "route_coordinates": [[-87.6298, 41.8781],...],
     "map_url": "/media/maps/map.html",
     "fuel_stops": [
         {
@@ -82,7 +82,7 @@ This Django application provides an API designed to calculate and display:
             "gallons": 35.29,
             "cost": 109.36
         },
-        ... (3 more stops)
+        ...
     ],
     "total_cost": 690.17,
     "total_distance": 2017.92
